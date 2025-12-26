@@ -1,4 +1,5 @@
 const { Tag, CharacterToken, CommentToken, Doctype, DoctypeToken, EOFToken } = require('./tokens');
+const entities = require('./entities.json');
 
 class Tokenizer {
   constructor(sink, options = {}) {
@@ -42,6 +43,108 @@ class Tokenizer {
     this.currentAttribute = { name: "", value: "" };
   }
 
+  codePointToSymbol(codePoint) {
+      if (codePoint === 0) return '\uFFFD';
+      if (codePoint > 0x10FFFF) return '\uFFFD';
+      if (codePoint >= 0xD800 && codePoint <= 0xDFFF) return '\uFFFD';
+      
+      const replacements = {
+          0x80: '\u20AC', 0x82: '\u201A', 0x83: '\u0192', 0x84: '\u201E', 0x85: '\u2026', 0x86: '\u2020', 0x87: '\u2021', 0x88: '\u02C6', 0x89: '\u2030', 0x8A: '\u0160', 0x8B: '\u2039', 0x8C: '\u0152', 0x8E: '\u017D',
+          0x91: '\u2018', 0x92: '\u2019', 0x93: '\u201C', 0x94: '\u201D', 0x95: '\u2022', 0x96: '\u2013', 0x97: '\u2014', 0x98: '\u02DC', 0x99: '\u2122', 0x9A: '\u0161', 0x9B: '\u203A', 0x9C: '\u0153', 0x9E: '\u017E', 0x9F: '\u0178'
+      };
+      
+      if (replacements[codePoint]) return replacements[codePoint];
+      
+      return String.fromCodePoint(codePoint);
+  }
+
+  consumeCharacterReference(additionalAllowedCharacter) {
+    let char = this.peekNextChar();
+    if (char === null) return null;
+    if (/[\t\n\f <&]/.test(char) || char === additionalAllowedCharacter) return null;
+    
+    if (char === '#') {
+        // Numeric
+        let tempPos = this.pos + 1; // Skip #
+        if (tempPos >= this.buffer.length) return null;
+        
+        char = this.buffer[tempPos];
+        let isHex = false;
+        if (char === 'x' || char === 'X') {
+            tempPos++;
+            isHex = true;
+            if (tempPos >= this.buffer.length) return null;
+        }
+        
+        let startPos = tempPos;
+        while (tempPos < this.buffer.length) {
+            char = this.buffer[tempPos];
+            if (isHex ? /[0-9a-fA-F]/.test(char) : /[0-9]/.test(char)) {
+                tempPos++;
+            } else {
+                break;
+            }
+        }
+        
+        if (tempPos === startPos) {
+            return null; // No digits
+        }
+        
+        const valueStr = this.buffer.slice(startPos, tempPos);
+        const codePoint = parseInt(valueStr, isHex ? 16 : 10);
+        
+        if (tempPos < this.buffer.length && this.buffer[tempPos] === ';') {
+            tempPos++;
+        }
+        
+        this.pos = tempPos;
+        return this.codePointToSymbol(codePoint);
+    } else {
+        // Named
+        let name = "";
+        let p = this.pos;
+        while (p < this.buffer.length) {
+            const c = this.buffer[p];
+            if (/[a-zA-Z0-9;]/.test(c)) {
+                name += c;
+                p++;
+                if (c === ';') break;
+            } else {
+                break;
+            }
+        }
+        
+        let fullCandidate = "&" + name;
+        let match = null;
+        let matchLength = 0;
+        
+        for (let i = fullCandidate.length; i >= 2; i--) {
+            const sub = fullCandidate.slice(0, i);
+            if (entities[sub]) {
+                match = entities[sub];
+                matchLength = i;
+                break;
+            }
+        }
+        
+        if (match) {
+            const lastChar = fullCandidate[matchLength - 1];
+            const nextChar = this.buffer[this.pos + matchLength - 1];
+            
+            if (additionalAllowedCharacter && lastChar !== ';') {
+                 if (nextChar && /[=a-zA-Z0-9]/.test(nextChar)) {
+                     return null;
+                 }
+            }
+            
+            this.pos += (matchLength - 1);
+            return match.characters;
+        }
+        
+        return null;
+    }
+  }
+
   run() {
     while (true) {
       const char = this.reconsume ? this.lastChar : this.getNextChar();
@@ -56,8 +159,12 @@ class Tokenizer {
       switch (this.state) {
         case Tokenizer.DATA:
           if (char === '&') {
-            // TODO: Character reference
-            this.sink.process(new CharacterToken(char));
+            const ref = this.consumeCharacterReference(null);
+            if (ref) {
+                this.sink.process(new CharacterToken(ref));
+            } else {
+                this.sink.process(new CharacterToken('&'));
+            }
           } else if (char === '<') {
             this.state = Tokenizer.TAG_OPEN;
           } else if (char === '\0') {
@@ -196,8 +303,12 @@ class Tokenizer {
             if (char === '"') {
                 this.state = Tokenizer.AFTER_ATTRIBUTE_VALUE_QUOTED;
             } else if (char === '&') {
-                // TODO: Character reference
-                this.currentAttribute.value += char;
+                const ref = this.consumeCharacterReference('"');
+                if (ref) {
+                    this.currentAttribute.value += ref;
+                } else {
+                    this.currentAttribute.value += '&';
+                }
             } else if (char === null) {
                 // TODO: Parse error
                 this.reconsume = true;
@@ -211,8 +322,12 @@ class Tokenizer {
             if (char === "'") {
                 this.state = Tokenizer.AFTER_ATTRIBUTE_VALUE_QUOTED;
             } else if (char === '&') {
-                // TODO: Character reference
-                this.currentAttribute.value += char;
+                const ref = this.consumeCharacterReference("'");
+                if (ref) {
+                    this.currentAttribute.value += ref;
+                } else {
+                    this.currentAttribute.value += '&';
+                }
             } else if (char === null) {
                 // TODO: Parse error
                 this.reconsume = true;
@@ -228,8 +343,12 @@ class Tokenizer {
                 this.reconsume = true;
                 this.state = Tokenizer.BEFORE_ATTRIBUTE_NAME;
             } else if (char === '&') {
-                // TODO: Character reference
-                this.currentAttribute.value += char;
+                const ref = this.consumeCharacterReference('>');
+                if (ref) {
+                    this.currentAttribute.value += ref;
+                } else {
+                    this.currentAttribute.value += '&';
+                }
             } else if (char === null) {
                 this.commitAttribute();
                 this.reconsume = true;
@@ -444,8 +563,12 @@ class Tokenizer {
 
         case Tokenizer.RCDATA:
             if (char === '&') {
-                // TODO: Character reference
-                this.sink.process(new CharacterToken(char));
+                const ref = this.consumeCharacterReference(null);
+                if (ref) {
+                    this.sink.process(new CharacterToken(ref));
+                } else {
+                    this.sink.process(new CharacterToken('&'));
+                }
             } else if (char === '<') {
                 this.state = Tokenizer.RCDATA_LESS_THAN_SIGN;
             } else if (char === null) {

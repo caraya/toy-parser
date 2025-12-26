@@ -1,4 +1,4 @@
- const assert = require('assert');
+const assert = require('assert');
 const JustHTML = require('../src/index');
 
 function testToHtml() {
