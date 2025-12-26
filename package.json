@@ -8,8 +8,9 @@
     "rohan": "./bin/rohan.js"
   },
   "scripts": {
-    "test": "node test/simple_test.js && node test/tokenizer_test.js && node test/tree_test.js",
-    "test:compliance": "node test/html5lib_runner.js"
+    "test": "npx playwright test",
+    "test:compliance": "node test/html5lib_runner.js",
+    "test:legacy": "node test/simple_test.js && node test/tokenizer_test.js && node test/tree_test.js"
   },
   "author": "Carlos Araya <carlos.araya@gmail.com>",
   "license": "MIT",

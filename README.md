@@ -76,14 +76,50 @@ You can use the bundled version in the browser.
 Rohan comes with a CLI for quick operations.
 
 ```bash
-# Convert HTML to Markdown
+$ rohan --help
+
+Usage: rohan [file] [options]
+
+Arguments:
+  file                  Path to HTML file (optional, reads from stdin if omitted)
+
+Options:
+  --format <type>       Output format: html, text, markdown, tree (default: html)
+  --select <selector>   CSS selector to extract specific element(s)
+  --help                Show this help message
+
+Examples:
+  rohan index.html --format markdown
+  cat index.html | rohan --select "h1" --format text
+```
+
+#### Common Operations
+
+**Convert HTML to Markdown**
+```bash
 echo "<h1>Title</h1><p>Content</p>" | rohan --format markdown
+```
 
-# Extract text from a specific element
+**Extract text from a specific element**
+```bash
 cat index.html | rohan --select "#content" --format text
+```
 
-# View the tree structure
+**View the tree structure**
+```bash
 rohan index.html --format tree
+```
+
+## Testing
+
+Rohan uses `@playwright/test` for unit testing and `html5lib-tests` for compliance testing.
+
+```bash
+# Run unit tests
+npm test
+
+# Run compliance tests
+npm run test:compliance
 ```
 
 ## DOM Compatibility
