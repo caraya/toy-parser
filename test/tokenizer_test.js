@@ -18,7 +18,7 @@ console.log("Running tokenizer tests...");
     const sink = new TestSink();
     const tokenizer = new Tokenizer(sink);
     tokenizer.initialize("<div>hello</div>");
-    tokenizer.run();
+    tokenizer.end();
 
     // My implementation emits char tokens one by one for now.
     // "hello" is 5 chars.
@@ -39,7 +39,7 @@ console.log("Running tokenizer tests...");
     const sink = new TestSink();
     const tokenizer = new Tokenizer(sink);
     tokenizer.initialize('<div class="foo" id=\'bar\'>');
-    tokenizer.run();
+    tokenizer.end();
     
     const startTag = sink.tokens[0];
     assert.strictEqual(startTag.name, 'div');
@@ -51,7 +51,7 @@ console.log("Running tokenizer tests...");
     const sink = new TestSink();
     const tokenizer = new Tokenizer(sink);
     tokenizer.initialize('<!-- comment -->');
-    tokenizer.run();
+    tokenizer.end();
     
     const comment = sink.tokens[0];
     assert.strictEqual(comment instanceof CommentToken, true);
@@ -63,7 +63,7 @@ console.log("Running tokenizer tests...");
     const sink = new TestSink();
     const tokenizer = new Tokenizer(sink);
     tokenizer.initialize('<br/>');
-    tokenizer.run();
+    tokenizer.end();
     
     const tag = sink.tokens[0];
     assert.strictEqual(tag.name, 'br');

@@ -14,6 +14,10 @@ class Tokenizer {
     this.currentDoctype = null;
     this.tempBuffer = "";
     this.lastChar = null;
+    this.ended = false;
+    this.returnState = null;
+    this.charRefCode = 0;
+    this.charRefName = "";
   }
 
   initialize(html) {
@@ -22,6 +26,26 @@ class Tokenizer {
     this.state = Tokenizer.DATA;
     this.reconsume = false;
     this.lastChar = null;
+    this.ended = false;
+    this.returnState = null;
+    this.charRefCode = 0;
+    this.charRefName = "";
+  }
+
+  write(chunk) {
+    this.buffer += chunk;
+    this.run();
+    
+    // Performance optimization: Trim buffer to avoid unbounded growth
+    if (this.pos > 2048) { 
+        this.buffer = this.buffer.slice(this.pos);
+        this.pos = 0;
+    }
+  }
+
+  end() {
+    this.ended = true;
+    this.run();
   }
 
   getNextChar() {
@@ -58,98 +82,47 @@ class Tokenizer {
       return String.fromCodePoint(codePoint);
   }
 
-  consumeCharacterReference(additionalAllowedCharacter) {
-    let char = this.peekNextChar();
-    if (char === null) return null;
-    if (/[\t\n\f <&]/.test(char) || char === additionalAllowedCharacter) return null;
-    
-    if (char === '#') {
-        // Numeric
-        let tempPos = this.pos + 1; // Skip #
-        if (tempPos >= this.buffer.length) return null;
-        
-        char = this.buffer[tempPos];
-        let isHex = false;
-        if (char === 'x' || char === 'X') {
-            tempPos++;
-            isHex = true;
-            if (tempPos >= this.buffer.length) return null;
-        }
-        
-        let startPos = tempPos;
-        while (tempPos < this.buffer.length) {
-            char = this.buffer[tempPos];
-            if (isHex ? /[0-9a-fA-F]/.test(char) : /[0-9]/.test(char)) {
-                tempPos++;
-            } else {
-                break;
-            }
-        }
-        
-        if (tempPos === startPos) {
-            return null; // No digits
-        }
-        
-        const valueStr = this.buffer.slice(startPos, tempPos);
-        const codePoint = parseInt(valueStr, isHex ? 16 : 10);
-        
-        if (tempPos < this.buffer.length && this.buffer[tempPos] === ';') {
-            tempPos++;
-        }
-        
-        this.pos = tempPos;
-        return this.codePointToSymbol(codePoint);
+  flushCodePointsConsumedAsCharacterReference() {
+    if (this.returnState === Tokenizer.ATTRIBUTE_VALUE_DOUBLE_QUOTED ||
+        this.returnState === Tokenizer.ATTRIBUTE_VALUE_SINGLE_QUOTED ||
+        this.returnState === Tokenizer.ATTRIBUTE_VALUE_UNQUOTED) {
+        this.currentAttribute.value += this.tempBuffer;
     } else {
-        // Named
-        let name = "";
-        let p = this.pos;
-        while (p < this.buffer.length) {
-            const c = this.buffer[p];
-            if (/[a-zA-Z0-9;]/.test(c)) {
-                name += c;
-                p++;
-                if (c === ';') break;
-            } else {
-                break;
-            }
+        for (const c of this.tempBuffer) {
+            this.sink.process(new CharacterToken(c));
         }
-        
-        let fullCandidate = "&" + name;
-        let match = null;
-        let matchLength = 0;
-        
-        for (let i = fullCandidate.length; i >= 2; i--) {
-            const sub = fullCandidate.slice(0, i);
-            if (entities[sub]) {
-                match = entities[sub];
-                matchLength = i;
-                break;
-            }
-        }
-        
-        if (match) {
-            const lastChar = fullCandidate[matchLength - 1];
-            const nextChar = this.buffer[this.pos + matchLength - 1];
-            
-            if (additionalAllowedCharacter && lastChar !== ';') {
-                 if (nextChar && /[=a-zA-Z0-9]/.test(nextChar)) {
-                     return null;
-                 }
-            }
-            
-            this.pos += (matchLength - 1);
-            return match.characters;
-        }
-        
-        return null;
     }
+  }
+
+  emitCharacterReference(text) {
+    if (this.returnState === Tokenizer.ATTRIBUTE_VALUE_DOUBLE_QUOTED ||
+        this.returnState === Tokenizer.ATTRIBUTE_VALUE_SINGLE_QUOTED ||
+        this.returnState === Tokenizer.ATTRIBUTE_VALUE_UNQUOTED) {
+        this.currentAttribute.value += text;
+    } else {
+        this.sink.process(new CharacterToken(text));
+    }
+  }
+
+  finishNumericCharacterReference() {
+      const symbol = this.codePointToSymbol(this.charRefCode);
+      this.emitCharacterReference(symbol);
+      this.state = this.returnState;
   }
 
   run() {
     while (true) {
-      const char = this.reconsume ? this.lastChar : this.getNextChar();
+      let char;
+      if (this.reconsume) {
+          char = this.lastChar;
+          this.reconsume = false;
+      } else {
+          char = this.getNextChar();
+          if (char === null && !this.ended) {
+              return;
+          }
+      }
       this.lastChar = char;
-      this.reconsume = false;
 
       if (char === null && this.state === Tokenizer.DATA) {
         this.sink.process(new EOFToken());
@@ -159,12 +132,8 @@ class Tokenizer {
       switch (this.state) {
         case Tokenizer.DATA:
           if (char === '&') {
-            const ref = this.consumeCharacterReference(null);
-            if (ref) {
-                this.sink.process(new CharacterToken(ref));
-            } else {
-                this.sink.process(new CharacterToken('&'));
-            }
+            this.returnState = Tokenizer.DATA;
+            this.state = Tokenizer.CHARACTER_REFERENCE;
           } else if (char === '<') {
             this.state = Tokenizer.TAG_OPEN;
           } else if (char === '\0') {
@@ -303,12 +272,8 @@ class Tokenizer {
             if (char === '"') {
                 this.state = Tokenizer.AFTER_ATTRIBUTE_VALUE_QUOTED;
             } else if (char === '&') {
-                const ref = this.consumeCharacterReference('"');
-                if (ref) {
-                    this.currentAttribute.value += ref;
-                } else {
-                    this.currentAttribute.value += '&';
-                }
+                this.returnState = Tokenizer.ATTRIBUTE_VALUE_DOUBLE_QUOTED;
+                this.state = Tokenizer.CHARACTER_REFERENCE;
             } else if (char === null) {
                 // TODO: Parse error
                 this.reconsume = true;
@@ -322,12 +287,8 @@ class Tokenizer {
             if (char === "'") {
                 this.state = Tokenizer.AFTER_ATTRIBUTE_VALUE_QUOTED;
             } else if (char === '&') {
-                const ref = this.consumeCharacterReference("'");
-                if (ref) {
-                    this.currentAttribute.value += ref;
-                } else {
-                    this.currentAttribute.value += '&';
-                }
+                this.returnState = Tokenizer.ATTRIBUTE_VALUE_SINGLE_QUOTED;
+                this.state = Tokenizer.CHARACTER_REFERENCE;
             } else if (char === null) {
                 // TODO: Parse error
                 this.reconsume = true;
@@ -343,12 +304,8 @@ class Tokenizer {
                 this.reconsume = true;
                 this.state = Tokenizer.BEFORE_ATTRIBUTE_NAME;
             } else if (char === '&') {
-                const ref = this.consumeCharacterReference('>');
-                if (ref) {
-                    this.currentAttribute.value += ref;
-                } else {
-                    this.currentAttribute.value += '&';
-                }
+                this.returnState = Tokenizer.ATTRIBUTE_VALUE_UNQUOTED;
+                this.state = Tokenizer.CHARACTER_REFERENCE;
             } else if (char === null) {
                 this.commitAttribute();
                 this.reconsume = true;
@@ -388,6 +345,135 @@ class Tokenizer {
             this.state = Tokenizer.BEFORE_ATTRIBUTE_NAME;
           }
           break;
+
+        case Tokenizer.CHARACTER_REFERENCE:
+            this.tempBuffer = "&";
+            if (char !== null && /[a-zA-Z0-9]/.test(char)) {
+                this.reconsume = true;
+                this.state = Tokenizer.NAMED_CHARACTER_REFERENCE;
+            } else if (char === '#') {
+                this.tempBuffer += char;
+                this.state = Tokenizer.NUMERIC_CHARACTER_REFERENCE;
+            } else {
+                this.flushCodePointsConsumedAsCharacterReference();
+                this.reconsume = true;
+                this.state = this.returnState;
+            }
+            break;
+
+        case Tokenizer.NAMED_CHARACTER_REFERENCE:
+            if (char !== null && /[a-zA-Z0-9]/.test(char)) {
+                this.tempBuffer += char;
+            } else if (char === ';') {
+                this.tempBuffer += ';';
+                if (entities[this.tempBuffer]) {
+                    this.emitCharacterReference(entities[this.tempBuffer].characters);
+                } else {
+                    this.flushCodePointsConsumedAsCharacterReference();
+                }
+                this.state = this.returnState;
+            } else {
+                let match = null;
+                let matchLength = 0;
+                for (let i = this.tempBuffer.length; i >= 2; i--) {
+                    const sub = this.tempBuffer.slice(0, i);
+                    if (entities[sub]) {
+                        match = entities[sub];
+                        matchLength = i;
+                        break;
+                    }
+                }
+                
+                if (match) {
+                    const lastChar = this.tempBuffer[matchLength - 1];
+                    if (this.returnState !== Tokenizer.DATA && this.returnState !== Tokenizer.RCDATA && lastChar !== ';') {
+                         if (char === '=') {
+                             this.flushCodePointsConsumedAsCharacterReference();
+                             this.reconsume = true;
+                             this.state = this.returnState;
+                             break;
+                         }
+                    }
+                    
+                    this.emitCharacterReference(match.characters);
+                    const suffix = this.tempBuffer.slice(matchLength);
+                    this.emitCharacterReference(suffix);
+                    
+                    this.reconsume = true;
+                    this.state = this.returnState;
+                } else {
+                    this.flushCodePointsConsumedAsCharacterReference();
+                    this.reconsume = true;
+                    this.state = this.returnState;
+                }
+            }
+            break;
+
+        case Tokenizer.NUMERIC_CHARACTER_REFERENCE:
+            this.charRefCode = 0;
+            if (char === 'x' || char === 'X') {
+                this.tempBuffer += char;
+                this.state = Tokenizer.HEXADECIMAL_CHARACTER_REFERENCE_START;
+            } else {
+                this.reconsume = true;
+                this.state = Tokenizer.DECIMAL_CHARACTER_REFERENCE_START;
+            }
+            break;
+
+        case Tokenizer.HEXADECIMAL_CHARACTER_REFERENCE_START:
+            if (char !== null && /[0-9a-fA-F]/.test(char)) {
+                this.reconsume = true;
+                this.state = Tokenizer.HEXADECIMAL_CHARACTER_REFERENCE;
+            } else {
+                this.flushCodePointsConsumedAsCharacterReference();
+                this.reconsume = true;
+                this.state = this.returnState;
+            }
+            break;
+
+        case Tokenizer.HEXADECIMAL_CHARACTER_REFERENCE:
+            if (char !== null && /[0-9a-fA-F]/.test(char)) {
+                this.charRefCode *= 16;
+                this.charRefCode += parseInt(char, 16);
+                this.tempBuffer += char;
+            } else if (char === ';') {
+                this.finishNumericCharacterReference();
+            } else {
+                this.finishNumericCharacterReference();
+                this.reconsume = true;
+            }
+            break;
+
+        case Tokenizer.DECIMAL_CHARACTER_REFERENCE_START:
+            if (char !== null && /[0-9]/.test(char)) {
+                this.reconsume = true;
+                this.state = Tokenizer.DECIMAL_CHARACTER_REFERENCE;
+            } else {
+                this.flushCodePointsConsumedAsCharacterReference();
+                this.reconsume = true;
+                this.state = this.returnState;
+            }
+            break;
+
+        case Tokenizer.DECIMAL_CHARACTER_REFERENCE:
+            if (char !== null && /[0-9]/.test(char)) {
+                this.charRefCode *= 10;
+                this.charRefCode += parseInt(char, 10);
+                this.tempBuffer += char;
+            } else if (char === ';') {
+                this.finishNumericCharacterReference();
+            } else {
+                this.finishNumericCharacterReference();
+                this.reconsume = true;
+            }
+            break;
+
+        case Tokenizer.NUMERIC_CHARACTER_REFERENCE_END:
+            // console.log("NUMERIC_CHARACTER_REFERENCE_END", this.charRefCode);
+            const symbol = this.codePointToSymbol(this.charRefCode);
+            this.emitCharacterReference(symbol);
+            this.state = this.returnState;
+            break;
 
         case Tokenizer.MARKUP_DECLARATION_OPEN:
             if (char === '-' && this.peekNextChar() === '-') {
@@ -563,12 +649,8 @@ class Tokenizer {
 
         case Tokenizer.RCDATA:
             if (char === '&') {
-                const ref = this.consumeCharacterReference(null);
-                if (ref) {
-                    this.sink.process(new CharacterToken(ref));
-                } else {
-                    this.sink.process(new CharacterToken('&'));
-                }
+                this.returnState = Tokenizer.RCDATA;
+                this.state = Tokenizer.CHARACTER_REFERENCE;
             } else if (char === '<') {
                 this.state = Tokenizer.RCDATA_LESS_THAN_SIGN;
             } else if (char === null) {
@@ -714,5 +796,14 @@ Tokenizer.BEFORE_DOCTYPE_NAME = 29;
 Tokenizer.DOCTYPE_NAME = 30;
 Tokenizer.AFTER_DOCTYPE_NAME = 31;
 Tokenizer.BOGUS_DOCTYPE = 32;
+Tokenizer.CHARACTER_REFERENCE = 33;
+Tokenizer.NAMED_CHARACTER_REFERENCE = 34;
+Tokenizer.AMBIGUOUS_AMPERSAND = 35;
+Tokenizer.NUMERIC_CHARACTER_REFERENCE = 36;
+Tokenizer.HEXADECIMAL_CHARACTER_REFERENCE_START = 37;
+Tokenizer.DECIMAL_CHARACTER_REFERENCE_START = 38;
+Tokenizer.HEXADECIMAL_CHARACTER_REFERENCE = 39;
+Tokenizer.DECIMAL_CHARACTER_REFERENCE = 40;
+Tokenizer.NUMERIC_CHARACTER_REFERENCE_END = 41;
 
 module.exports = Tokenizer;

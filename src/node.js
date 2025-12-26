@@ -27,30 +27,47 @@ class Node {
   }
 
   toHtml(options = { indent: 2 }) {
-    if (this.type === '#text') return this.text; // TODO: Escape text?
-    if (this.type === '#comment') return `<!--${this.text}-->`;
-    if (this.type === '#doctype') return `<!DOCTYPE ${this.name}>`;
+    const output = [];
+    this._toHtml(options, output);
+    return output.join('');
+  }
+
+  _toHtml(options, output) {
+    if (this.type === '#text') {
+        output.push(this.text); // TODO: Escape text?
+        return;
+    }
+    if (this.type === '#comment') {
+        output.push(`<!--${this.text}-->`);
+        return;
+    }
+    if (this.type === '#doctype') {
+        output.push(`<!DOCTYPE ${this.name}>`);
+        return;
+    }
     if (this.type === '#document') {
-        return this.children.map(c => c.toHtml(options)).join('');
+        for (const child of this.children) {
+            child._toHtml(options, output);
+        }
+        return;
     }
     
-    let html = `<${this.name}`;
+    output.push(`<${this.name}`);
     for (const [key, value] of Object.entries(this.attrs)) {
         // TODO: Escape attribute values
-        html += ` ${key}="${value}"`;
+        output.push(` ${key}="${value}"`);
     }
-    html += '>';
+    output.push('>');
     
     if (VOID_TAGS.has(this.name)) {
-        return html;
+        return;
     }
     
     for (const child of this.children) {
-        html += child.toHtml(options);
+        child._toHtml(options, output);
     }
     
-    html += `</${this.name}>`;
-    return html;
+    output.push(`</${this.name}>`);
   }
 
   toText() {
@@ -129,6 +146,80 @@ class Node {
           return this.attrs.class && this.attrs.class.split(/\s+/).includes(className);
       }
       return this.name === selector;
+  }
+
+  // --- DOM Compatibility Layer ---
+
+  get nodeType() {
+      if (this.type === '#element') return 1;
+      if (this.type === '#text') return 3;
+      if (this.type === '#comment') return 8;
+      if (this.type === '#document') return 9;
+      if (this.type === '#doctype') return 10;
+      return 0;
+  }
+
+  get nodeName() {
+      if (this.type === '#element') return this.name.toUpperCase();
+      return this.name;
+  }
+
+  get tagName() {
+      return this.nodeName;
+  }
+
+  get textContent() {
+      if (this.type === '#text') return this.text;
+      if (this.type === '#comment' || this.type === '#doctype') return '';
+      return this.children.map(c => c.textContent).join('');
+  }
+
+  get innerHTML() {
+      return this.children.map(c => c.toHtml()).join('');
+  }
+
+  get childNodes() {
+      return this.children;
+  }
+
+  get parentNode() {
+      return this.parent;
+  }
+
+  get firstChild() {
+      return this.children[0] || null;
+  }
+
+  get lastChild() {
+      return this.children[this.children.length - 1] || null;
+  }
+
+  get nextSibling() {
+      if (!this.parent) return null;
+      const index = this.parent.children.indexOf(this);
+      return this.parent.children[index + 1] || null;
+  }
+
+  get previousSibling() {
+      if (!this.parent) return null;
+      const index = this.parent.children.indexOf(this);
+      return this.parent.children[index - 1] || null;
+  }
+
+  getAttribute(name) {
+      return this.attrs[name] || null;
+  }
+
+  hasAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attrs, name);
+  }
+
+  querySelector(selector) {
+      return this.query(selector);
+  }
+
+  querySelectorAll(selector) {
+      return this.queryAll(selector);
   }
 
   toTestFormat(indent = 0) {

@@ -3,21 +3,25 @@ const Tokenizer = require('./tokenizer');
 const TreeBuilder = require('./treebuilder');
 
 class JustHTML {
-  constructor(html, options = {}) {
-    this.html = html;
+  constructor(html = null, options = {}) {
     this.options = options;
-    this._parse();
+    this.tokenizer = new Tokenizer(null, this.options);
+    this.treeBuilder = new TreeBuilder(this.tokenizer, this.options);
+    this.tokenizer.sink = this.treeBuilder; // Connect tokenizer to tree builder
+    this.root = this.treeBuilder.document;
+
+    if (html !== null) {
+        this.tokenizer.initialize(html);
+        this.tokenizer.end();
+    }
   }
 
-  _parse() {
-    const tokenizer = new Tokenizer(null, this.options);
-    const treeBuilder = new TreeBuilder(tokenizer, this.options);
-    tokenizer.sink = treeBuilder; // Connect tokenizer to tree builder
-    
-    tokenizer.initialize(this.html);
-    tokenizer.run();
-    
-    this.root = treeBuilder.document;
+  write(chunk) {
+      this.tokenizer.write(chunk);
+  }
+
+  end() {
+      this.tokenizer.end();
   }
 }
 

@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "A zero-dependency HTML parser for JavaScript",
   "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "bin": {
+    "rohan": "./bin/rohan.js"
+  },
   "scripts": {
     "test": "node test/simple_test.js && node test/tokenizer_test.js && node test/tree_test.js",
     "test:compliance": "node test/html5lib_runner.js"
@@ -13,5 +17,8 @@
     "test": "test"
   },
   "keywords": [],
-  "type": "commonjs"
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.57.0"
+  }
 }
