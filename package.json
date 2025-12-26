@@ -1,0 +1,17 @@
+{
+  "name": "@elrond25/rohan",
+  "version": "0.1.0",
+  "description": "A zero-dependency HTML parser for JavaScript",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node test/simple_test.js && node test/tokenizer_test.js && node test/tree_test.js",
+    "test:compliance": "node test/html5lib_runner.js"
+  },
+  "author": "Carlos Araya <carlos.araya@gmail.com>",
+  "license": "MIT",
+  "directories": {
+    "test": "test"
+  },
+  "keywords": [],
+  "type": "module"
+}
