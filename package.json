@@ -13,5 +13,5 @@
     "test": "test"
   },
   "keywords": [],
-  "type": "module"
+  "type": "commonjs"
 }

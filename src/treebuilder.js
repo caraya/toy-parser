@@ -544,6 +544,8 @@ class TreeBuilder {
                 // console.log('Found active A, calling adoption agency');
                 // Parse error
                 this._callAdoptionAgency(token);
+                this._removeFromActiveFormattingElements(activeA);
+                this._removeFromOpenElements(activeA);
             }
             this._reconstructActiveFormattingElements();
             const element = this._insertElement(token);
